@@ -29,7 +29,7 @@ jobs:
           New-LocalUser -Name 'RDP' -Password $securePass -AccountNeverExpires
           Add-LocalGroupMember -Group 'Administrators' -Member 'RDP'
           Add-LocalGroupMember -Group 'Remote Desktop Users' -Member 'RDP'
-          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+          echo "RDP_PIN=$password" >> $env:GITHUB_ENV
 
       - name: Initialize Eight Edge Profiles
         run: |
@@ -63,6 +63,6 @@ jobs:
         run: |
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
-          Write-Host "Password: $env:RDP_CREDS"
+          Write-Host "PIN: $env:RDP_PIN"
           Write-Host 'Edge profiles: C:\Users\RDP\EdgeProfiles\Profile-01 through Profile-08'
           while ($true) { Start-Sleep -Seconds 300 }
