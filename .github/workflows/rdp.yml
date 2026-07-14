@@ -31,17 +31,17 @@ jobs:
           Add-LocalGroupMember -Group 'Remote Desktop Users' -Member 'RDP'
           echo "RDP_PIN=$password" >> $env:GITHUB_ENV
 
-      - name: Initialize Eight Edge Profiles
+      - name: Initialize Eight Browser Profiles
         run: |
-          $edgeExe = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-          if (-not $edgeExe) { throw 'Microsoft Edge was not found on this runner.' }
+          $browserExe = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $browserExe) { throw 'Neither Microsoft Edge nor Google Chrome was found on this runner.' }
           $profileRoot = 'C:\Users\RDP\EdgeProfiles'
           New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
           icacls $profileRoot /grant 'RDP:(OI)(CI)F' /T /C | Out-Null
           1..8 | ForEach-Object {
             $profilePath = Join-Path $profileRoot ("Profile-{0:D2}" -f $_)
             New-Item -ItemType Directory -Path $profilePath -Force | Out-Null
-            Start-Process -FilePath $edgeExe -ArgumentList @('--headless=new', '--dump-dom', '--no-first-run', '--disable-gpu', "--user-data-dir=$profilePath", 'about:blank') -Wait
+            Start-Process -FilePath $browserExe -ArgumentList @('--headless=new', '--dump-dom', '--no-first-run', '--disable-gpu', "--user-data-dir=$profilePath", 'about:blank') -Wait
           }
 
       - name: Install Tailscale
@@ -64,5 +64,5 @@ jobs:
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
           Write-Host "PIN: $env:RDP_PIN"
-          Write-Host 'Edge profiles: C:\Users\RDP\EdgeProfiles\Profile-01 through Profile-08'
+          Write-Host 'Browser profiles: C:\Users\RDP\EdgeProfiles\Profile-01 through Profile-08'
           while ($true) { Start-Sleep -Seconds 300 }

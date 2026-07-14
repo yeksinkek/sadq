@@ -54,15 +54,17 @@ jobs:
               exit 1
           }
 
-      - name: Initialize Eight Edge Profiles
+      - name: Initialize Eight Browser Profiles
         run: |
-          $edgeExe = @(
+          $browserExe = @(
             "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
-            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+            "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
           ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 
-          if (-not $edgeExe) {
-              Write-Error 'Microsoft Edge was not found on this runner.'
+          if (-not $browserExe) {
+              Write-Error 'Neither Microsoft Edge nor Google Chrome was found on this runner.'
               exit 1
           }
 
@@ -73,8 +75,8 @@ jobs:
           1..8 | ForEach-Object {
               $profilePath = Join-Path $profileRoot ("Profile-{0:D2}" -f $_)
               New-Item -ItemType Directory -Path $profilePath -Force | Out-Null
-              # A short headless start makes Edge create its initial profile data.
-              Start-Process -FilePath $edgeExe -ArgumentList @(
+              # A short headless start makes the browser create its initial profile data.
+              Start-Process -FilePath $browserExe -ArgumentList @(
                 '--headless=new', '--dump-dom', '--no-first-run', '--disable-gpu',
                 "--user-data-dir=$profilePath", 'about:blank'
               ) -Wait
