@@ -31,18 +31,45 @@ jobs:
           Add-LocalGroupMember -Group 'Remote Desktop Users' -Member 'RDP'
           echo "RDP_PIN=$password" >> $env:GITHUB_ENV
 
-      - name: Initialize Eight Browser Profiles
+      - name: Create Eight Visible Browser Profiles at RDP Logon
         run: |
-          $browserExe = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-          if (-not $browserExe) { throw 'Neither Microsoft Edge nor Google Chrome was found on this runner.' }
-          $profileRoot = 'C:\Users\RDP\EdgeProfiles'
-          New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
-          icacls $profileRoot /grant 'RDP:(OI)(CI)F' /T /C | Out-Null
-          1..8 | ForEach-Object {
-            $profilePath = Join-Path $profileRoot ("Profile-{0:D2}" -f $_)
-            New-Item -ItemType Directory -Path $profilePath -Force | Out-Null
-            Start-Process -FilePath $browserExe -ArgumentList @('--headless=new', '--dump-dom', '--no-first-run', '--disable-gpu', "--user-data-dir=$profilePath", 'about:blank') -Wait
-          }
+          $scriptDirectory = 'C:\ProgramData\RDP'
+          $scriptPath = Join-Path $scriptDirectory 'create-visible-browser-profiles.ps1'
+          New-Item -ItemType Directory -Path $scriptDirectory -Force | Out-Null
+          $profileScript = @'
+$chrome = @("${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+$edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+$browserExe = if ($chrome) { $chrome } else { $edge }
+if (-not $browserExe) { throw 'Neither Google Chrome nor Microsoft Edge was found.' }
+
+$dataRoot = if ($browserExe -match '\\Google\\Chrome\\') {
+  Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
+} else {
+  Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data'
+}
+New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
+
+$profiles = 1..8 | ForEach-Object { "Profile $_" }
+$infoCache = [ordered]@{}
+foreach ($profile in $profiles) {
+  $profilePath = Join-Path $dataRoot $profile
+  New-Item -ItemType Directory -Path $profilePath -Force | Out-Null
+  @{ profile = @{ name = $profile } } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $profilePath 'Preferences') -Encoding UTF8
+  $infoCache[$profile] = @{ name = $profile; user_name = ''; gaia_name = ''; is_using_default_name = $false }
+}
+
+@{ profile = @{ info_cache = $infoCache; profiles_order = $profiles; last_used = 'Profile 1' } } |
+  ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $dataRoot 'Local State') -Encoding UTF8
+
+Start-Process -FilePath $browserExe -ArgumentList '--no-first-run', '--profile-directory=Profile 1', 'about:blank'
+'@
+          Set-Content -LiteralPath $scriptPath -Value $profileScript -Encoding UTF8
+          $taskName = 'CreateVisibleBrowserProfiles'
+          Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+          $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
+          $trigger = New-ScheduledTaskTrigger -AtLogOn -User 'RDP'
+          $principal = New-ScheduledTaskPrincipal -UserId 'RDP' -LogonType Interactive -RunLevel Limited
+          Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
 
       - name: Install Tailscale
         run: |
@@ -64,5 +91,5 @@ jobs:
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
           Write-Host "PIN: $env:RDP_PIN"
-          Write-Host 'Browser profiles: C:\Users\RDP\EdgeProfiles\Profile-01 through Profile-08'
+          Write-Host 'Eight visible Chrome/Edge profiles will be created when RDP logs on.'
           while ($true) { Start-Sleep -Seconds 300 }
