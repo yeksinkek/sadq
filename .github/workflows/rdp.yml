@@ -1,0 +1,68 @@
+name: RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'UserAuthentication' -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'SecurityLayer' -Value 0 -Force
+          netsh advfirewall firewall delete rule name='RDP-Tailscale'
+          netsh advfirewall firewall add rule name='RDP-Tailscale' dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User with Four-Digit PIN
+        run: |
+          $policyFile = Join-Path $env:TEMP 'rdp-security-policy.inf'
+          secedit /export /cfg $policyFile | Out-Null
+          (Get-Content -LiteralPath $policyFile) -replace 'MinimumPasswordLength = .*', 'MinimumPasswordLength = 4' -replace 'PasswordComplexity = .*', 'PasswordComplexity = 0' | Set-Content -LiteralPath $policyFile -Encoding Unicode
+          secedit /configure /db "$env:TEMP\rdp-security-policy.sdb" /cfg $policyFile /areas SECURITYPOLICY | Out-Null
+          $password = -join (1..4 | ForEach-Object { Get-Random -Minimum 0 -Maximum 10 })
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name 'RDP' -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group 'Administrators' -Member 'RDP'
+          Add-LocalGroupMember -Group 'Remote Desktop Users' -Member 'RDP'
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+
+      - name: Initialize Eight Edge Profiles
+        run: |
+          $edgeExe = @("$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $edgeExe) { throw 'Microsoft Edge was not found on this runner.' }
+          $profileRoot = 'C:\Users\RDP\EdgeProfiles'
+          New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
+          icacls $profileRoot /grant 'RDP:(OI)(CI)F' /T /C | Out-Null
+          1..8 | ForEach-Object {
+            $profilePath = Join-Path $profileRoot ("Profile-{0:D2}" -f $_)
+            New-Item -ItemType Directory -Path $profilePath -Force | Out-Null
+            Start-Process -FilePath $edgeExe -ArgumentList @('--headless=new', '--dump-dom', '--no-first-run', '--disable-gpu', "--user-data-dir=$profilePath", 'about:blank') -Wait
+          }
+
+      - name: Install Tailscale
+        run: |
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri 'https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi' -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList '/i', "`"$installerPath`"", '/quiet', '/norestart' -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish Tailscale Connection
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          $tsIP = $null
+          1..10 | ForEach-Object { if (-not $tsIP) { $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4; Start-Sleep -Seconds 5 } }
+          if (-not $tsIP) { throw 'Tailscale IP not assigned.' }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $env:RDP_CREDS"
+          Write-Host 'Edge profiles: C:\Users\RDP\EdgeProfiles\Profile-01 through Profile-08'
+          while ($true) { Start-Sleep -Seconds 300 }

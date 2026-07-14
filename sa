@@ -29,22 +29,19 @@ jobs:
           # (Optional) Restart the Remote Desktop service to ensure changes take effect
           Restart-Service -Name TermService -Force
 
-      - name: Create RDP User with Secure Password
+      - name: Create RDP User with Four-Digit PIN
         run: |
-          Add-Type -AssemblyName System.Security
-          $charSet = @{
-              Upper   = [char[]](65..90)      # A-Z
-              Lower   = [char[]](97..122)     # a-z
-              Number  = [char[]](48..57)      # 0-9
-              Special = ([char[]](33..47) + [char[]](58..64) +
-                         [char[]](91..96) + [char[]](123..126)) # Special characters
-          }
-          $rawPassword = @()
-          $rawPassword += $charSet.Upper | Get-Random -Count 4
-          $rawPassword += $charSet.Lower | Get-Random -Count 4
-          $rawPassword += $charSet.Number | Get-Random -Count 4
-          $rawPassword += $charSet.Special | Get-Random -Count 0
-          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          # GitHub-hosted runners are ephemeral. Disable the local complexity
+          # policy so a four-digit, numeric-only RDP PIN is accepted.
+          $policyFile = Join-Path $env:TEMP 'rdp-security-policy.inf'
+          secedit /export /cfg $policyFile | Out-Null
+          (Get-Content -LiteralPath $policyFile) `
+            -replace 'MinimumPasswordLength = .*', 'MinimumPasswordLength = 4' `
+            -replace 'PasswordComplexity = .*', 'PasswordComplexity = 0' |
+            Set-Content -LiteralPath $policyFile -Encoding Unicode
+          secedit /configure /db "$env:TEMP\rdp-security-policy.sdb" /cfg $policyFile /areas SECURITYPOLICY | Out-Null
+
+          $password = -join (1..4 | ForEach-Object { Get-Random -Minimum 0 -Maximum 10 })
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
@@ -55,6 +52,32 @@ jobs:
           if (-not (Get-LocalUser -Name "RDP")) {
               Write-Error "User creation failed"
               exit 1
+          }
+
+      - name: Initialize Eight Edge Profiles
+        run: |
+          $edgeExe = @(
+            "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe",
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+          ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+          if (-not $edgeExe) {
+              Write-Error 'Microsoft Edge was not found on this runner.'
+              exit 1
+          }
+
+          $profileRoot = 'C:\Users\RDP\EdgeProfiles'
+          New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
+          icacls $profileRoot /grant 'RDP:(OI)(CI)F' /T /C | Out-Null
+
+          1..8 | ForEach-Object {
+              $profilePath = Join-Path $profileRoot ("Profile-{0:D2}" -f $_)
+              New-Item -ItemType Directory -Path $profilePath -Force | Out-Null
+              # A short headless start makes Edge create its initial profile data.
+              Start-Process -FilePath $edgeExe -ArgumentList @(
+                '--headless=new', '--dump-dom', '--no-first-run', '--disable-gpu',
+                "--user-data-dir=$profilePath", 'about:blank'
+              ) -Wait
           }
 
       - name: Install Tailscale
