@@ -33,7 +33,7 @@ jobs:
 
       - name: Initialize Eight Edge Profiles
         run: |
-          $edgeExe = @("$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          $edgeExe = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
           if (-not $edgeExe) { throw 'Microsoft Edge was not found on this runner.' }
           $profileRoot = 'C:\Users\RDP\EdgeProfiles'
           New-Item -ItemType Directory -Path $profileRoot -Force | Out-Null
